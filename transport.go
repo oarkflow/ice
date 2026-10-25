@@ -156,6 +156,9 @@ func (c *Conn) Write(packet []byte) (int, error) {
 
 	pair := c.agent.getSelectedPair()
 	if pair == nil {
+		pair = c.agent.retiredPair.p.Load() // PATCH: keep writing on the old path until the new one is selected
+	}
+	if pair == nil {
 		// Note: the closure must capture p and not pair. Whether a variable
 		// is heap-allocated is a static decision across all code paths, and
 		// the allocation happens where the variable is declared. If we were

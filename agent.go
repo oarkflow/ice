@@ -129,6 +129,11 @@ type Agent struct {
 
 	selectedPair atomic.Value // *CandidatePair
 
+	// PATCH (retire.go): the generation of candidates a restart replaced, kept
+	// alive until the new generation has a selected pair.
+	retired     *retiredGeneration
+	retiredPair retiredPairHolder
+
 	urls                   []*stun.URI
 	networkTypes           []NetworkType
 	turnTransportProtocols []NetworkType
@@ -782,6 +787,7 @@ func (a *Agent) setSelectedPair(pair *CandidatePair) {
 	pair.nominated = true
 	a.selectedPair.Store(pair)
 	a.log.Tracef("Set selected candidate pair: %s", pair)
+	a.newPairSelected() // PATCH
 
 	// Signal connected: notify any Connect() calls waiting on onConnected
 	a.onConnectedOnce.Do(func() { close(a.onConnected) })
@@ -1641,6 +1647,7 @@ func (a *Agent) abortStartedCandidateIO() {
 //
 // This is used for restarts, failures and on close.
 func (a *Agent) deleteAllCandidates() {
+	a.closeRetired() // PATCH
 	for net, cs := range a.localCandidates {
 		for _, c := range cs {
 			if err := c.close(); err != nil {
@@ -2026,6 +2033,9 @@ func (a *Agent) validateNonSTUNTraffic(local Candidate, remote netip.AddrPort) (
 	var remoteCandidate Candidate
 	if err := a.loop.Run(local.context(), func(context.Context) {
 		remoteCandidate = a.findRemoteCandidate(local.NetworkType(), remote)
+		if remoteCandidate == nil {
+			remoteCandidate = a.findRetiredRemote(local.NetworkType(), remote) // PATCH
+		}
 		if remoteCandidate == nil && a.lite && a.remoteLite {
 			// with no connectivity checks, a multi-candidate ICE-lite peer cannot
 			// discover that the the other peer emitted a packet from another
@@ -2172,8 +2182,18 @@ func (a *Agent) Restart(ufrag, pwd string) error { //nolint:cyclop
 		a.checklist = make([]*CandidatePair, 0)
 		a.pairsByID = make(map[uint64]*CandidatePair)
 		a.pendingBindingRequests = make([]bindingRequest, 0)
-		a.setSelectedPair(nil)
-		a.deleteAllCandidates()
+		if a.constructed {
+			// PATCH: make before break. Retire the old generation instead of closing it.
+			old := a.getSelectedPair()
+			a.setSelectedPair(nil)
+			a.retireCandidates()
+			if old != nil {
+				a.retiredPair.p.Store(old)
+			}
+		} else {
+			a.setSelectedPair(nil)
+			a.deleteAllCandidates()
+		}
 		a.setSelector()
 
 		// Restart is used by NewAgent. Accept/Connect should be used to move to checking

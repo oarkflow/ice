@@ -1,3 +1,7 @@
+> **oarkflow/ice** is a fork of [pion/ice](https://github.com/pion/ice) v4.4.8 with one change: an ICE
+> restart is *make-before-break*, as RFC 8445 section 9 intends. See [PATCH.md](PATCH.md).
+> The module path is unchanged (`github.com/pion/ice/v4`), so it is used with a `replace` directive.
+
 <h1 align="center">
   <br>
   Pion ICE
